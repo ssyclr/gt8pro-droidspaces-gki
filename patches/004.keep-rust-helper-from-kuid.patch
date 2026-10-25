@@ -1,0 +1,24 @@
+Keep rust_helper_from_kuid with CONFIG_USER_NS=y
+
+With USER_NS=y from_kuid is a real function and the helper was compiled
+out, removing the rust_helper_from_kuid export that the stock
+rust_binder.ko imports. rust/bindings/lib.rs prefers the direct binding
+when both exist, so keeping the helper only keeps the export.
+
+diff --git a/rust/helpers/task.c b/rust/helpers/task.c
+index 5874032..69c3829 100644
+--- a/rust/helpers/task.c
++++ b/rust/helpers/task.c
+@@ -28,12 +28,10 @@ kuid_t rust_helper_task_euid(struct task_struct *task)
+ 	return task_euid(task);
+ }
+ 
+-#ifndef CONFIG_USER_NS
+ uid_t rust_helper_from_kuid(struct user_namespace *to, kuid_t uid)
+ {
+ 	return from_kuid(to, uid);
+ }
+-#endif /* CONFIG_USER_NS */
+ 
+ bool rust_helper_uid_eq(kuid_t left, kuid_t right)
+ {

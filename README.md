@@ -19,6 +19,11 @@
    - `002.export-ipc-ns-for-rust-binder.patch`：导出 `init_ipc_ns` 和 `put_ipc_ns`。
      - 开了 `IPC_NS` 之后，GKI 模块 `rust_binder.ko` 会引用这两个没有导出的符号，modpost 报错。原厂不开 `IPC_NS`，所以从没遇到过。
      - 导出后 vmlinux 只是多出 2 个符号，已有符号不变。手机上加载的仍是原厂的 `rust_binder.ko`。
+   - `003`–`006`：保持 Rust 符号不变，详见下面的「Rust 符号」一节。
+     - `003.hide-sysvipc-fields-from-bindgen.patch`：bindgen 看不到补丁 001 加进 `task_struct` 的字段（`!defined(__BINDGEN__)`）。
+     - `004.keep-rust-helper-from-kuid.patch`：开了 `USER_NS` 也保留 `rust_helper_from_kuid`。
+     - `005.keep-rust-helper-from-kuid-export.patch`：把 `rust_helper_from_kuid` 加进 KMI 符号列表 `gki/aarch64/symbols/base`，免得被 `TRIM_UNUSED_KSYMS` 裁掉。
+     - `006.show-bindgen-stock-sysv-structs.patch`：bindgen 看到的 `sysv_sem`/`sysv_shm` 仍是原厂的空结构体。
 3. **直接修改 `gki_defconfig`**（不用 fragment），选项清单见 [`config/droidspaces_options.txt`](config/droidspaces_options.txt)：`# CONFIG_X is not set` 改成 `=y`，已经是 `=y` 的不动，不存在的追加到末尾。脚本会检查：除清单选项和下面第 4 条外，`gki_defconfig` 里没有任何其他改动。
 4. **信任原厂模块签名证书：** `CONFIG_SYSTEM_TRUSTED_KEYS="certs/stock_gki_module_signing.pem"`。
    - system_dlkm 里的 GKI 模块是用官方构建时生成的一次性密钥签名的。自编内核的密钥不同，如果不处理，这些模块会被当成未签名。6.12 的 GKI 模块保护随后会拒载 `rfkill.ko` 等模块，厂商的 `cfg80211`（Wi-Fi）、`btpower`（蓝牙）和 `nfc` 都依赖 `rfkill.ko`。
@@ -33,10 +38,20 @@
 - **原厂本来就开着 `CONFIG_CFS_BANDWIDTH=y`**（Google 在 `gki_defconfig` 里开的）。这里保持原样：关掉它和打开它一样会破坏 ABI。所以 Droidspaces 的 `--cpus` 可以用。`CONFIG_CGROUP_PIDS` 不开，`--pids-limit` 不可用。
 - **`CONFIG_NETFILTER_XT_TARGET_REJECT` 在这个源码树的 Kconfig 里不存在**，按文档加上后会被 Kconfig 丢掉，报告里标为「➖」。iptables 的 REJECT 由原厂已开启的 `IP_NF_TARGET_REJECT` / `IP6_NF_TARGET_REJECT` 提供。
 
+## Rust 符号
+
+这个内核开着 `CONFIG_RUST`。Rust 导出符号（`kernel` crate、`bindings` crate、`rust_helper_*`）的 CRC 由 bindgen 根据 C 头文件生成的 Rust 绑定计算，`__kabi_ignored` 只对 C 生效。如果只打 Droidspaces 的补丁，ABI 自检的结果是：
+
+- 23 个 Rust 符号 CRC 变化（`kernel::task::Task::*` 等）：bindgen 把补丁 001 加进 `task_struct` 的两个 union 也生成了出来。
+- `<rb_node as Default>::default`、`<rb_root as Default>::default` 改名：`sysv_sem`/`sysv_shm` 有了成员，bindgen 把它们的 `Default` 从 derive 改成手写 impl，而 Rust 符号名按手写 impl 计数，后面的序号整体后移 2 位。
+- `rust_helper_from_kuid` 被删：开了 `USER_NS` 后它不再编译，本次构建也没有模块用它，导出会被裁掉。
+
+这 26 个符号只有原厂的 `rust_binder.ko` 在用，都不在 KMI 列表里，厂商模块用不到。补丁 003–006 消除了这些变化。逐个去掉推荐选项的排查表明：除 `USER_NS` 外，其余推荐选项都与此无关；前两项来自必需项 `SYSVIPC`。
+
 ## 红线（脚本层面已防护）
 
 - 不开 `CFS_BANDWIDTH`、`CGROUP_PIDS`，也不改动它们的原厂状态。
-- 不开文档清单以外的选项。唯一例外是第 4 条的 `SYSTEM_TRUSTED_KEYS`：它是证书路径，不是功能开关，已获批准。
+- 不开文档清单以外的选项。唯一例外是第 4 条的 `SYSTEM_TRUSTED_KEYS`：它是证书路径，不是功能开关，已获批准。补丁 002–006（含 KMI 符号列表里新增的那一行）也都已获批准。
 - 不关 `CONFIG_MODVERSIONS`，不强制加载模块。
 - 只刷 `boot`。
 
@@ -66,7 +81,7 @@ GitHub → Actions → **Build Droidspaces GKI kernel** → Run workflow。
 
 `abi-report.md` 包含：
 
-- **符号**：官方 → droidspaces 的 `vmlinux.symvers` 对比。已有符号的 CRC 变化必须为 0；不能有符号被删除；导出类型或命名空间也不能变（比如从 `EXPORT_SYMBOL` 变成 `_GPL`）。新增符号可以接受。
+- **符号**：官方 → droidspaces 的 `vmlinux.symvers` 对比。已有符号的 CRC 变化必须为 0；不能有符号被删除；导出类型或命名空间也不能变（比如从 `EXPORT_SYMBOL` 变成 `_GPL`）。新增符号可以接受，ab14541642 上预期新增 8 个：`from_kuid`、`from_kuid_munged`、`from_kgid`、`from_kgid_munged`、`make_kuid`、`make_kgid`（来自 `USER_NS`），以及 `init_ipc_ns`、`put_ipc_ns`（来自补丁 002）。
 - **配置**：清单里每个选项是否真的是 `=y`（依赖不满足时会被静默丢掉）、两个禁止项是否与原厂一致、`MODVERSIONS` 是否开启，以及全部配置差异。
 - **证书**：原厂模块签名证书是否已打进新 Image。
 - **结构体布局**：用 BTF 对比内核里所有具名结构体。`task_struct` 应该显示为「只在空隙里新增成员」；如果有任何已有成员移位，会单独列出，需要人工审查。

@@ -1,0 +1,23 @@
+Hide the SYSVIPC fields added by 001 from bindgen
+
+Patch 001 puts sysvsem/sysvshm into a padding hole of task_struct inside
+__kabi_ignored unions, which gendwarfksyms ignores for C. bindgen still
+turns them into new members and union types of bindings::task_struct, so
+the CRCs of Rust kernel-crate exports that reach task_struct change, and
+the extra impls renumber other Rust symbols. __BINDGEN__ is defined only
+while bindgen runs, so Rust keeps seeing the stock task_struct layout.
+The fields sit in padding, so the layout Rust sees is unchanged.
+
+diff --git a/include/linux/sched.h b/include/linux/sched.h
+index af6712f..794b76c 100644
+--- a/include/linux/sched.h
++++ b/include/linux/sched.h
+@@ -885,7 +885,7 @@ struct task_struct {
+ 	int				normal_prio;
+ 	unsigned int			rt_priority;
+ 
+-#ifdef CONFIG_SYSVIPC
++#if defined(CONFIG_SYSVIPC) && !defined(__BINDGEN__)
+ 	union {
+ 		char __kabi_ignored_0;
+ 		struct sysv_sem			sysvsem;
