@@ -1,0 +1,36 @@
+Show bindgen the stock sysv_sem and sysv_shm
+
+With SYSVIPC=y these structs gain members, so bindgen stops deriving
+Default for them and writes manual impls instead. Rust numbers manual
+impls in symbol names, so every later impl in the bindings crate is
+renamed, including the two it exports (<rb_node as Default>::default and
+<rb_root as Default>::default) that the stock rust_binder.ko imports.
+No Rust code uses either struct and, with patch 003, nothing in the
+bindings embeds them, so bindgen can keep seeing the SYSVIPC=n versions.
+
+diff --git a/include/linux/sem_types.h b/include/linux/sem_types.h
+index 73df197..9f01fb6 100644
+--- a/include/linux/sem_types.h
++++ b/include/linux/sem_types.h
+@@ -5,7 +5,7 @@
+ struct sem_undo_list;
+ 
+ struct sysv_sem {
+-#ifdef CONFIG_SYSVIPC
++#if defined(CONFIG_SYSVIPC) && !defined(__BINDGEN__)
+ 	struct sem_undo_list *undo_list;
+ #endif
+ };
+diff --git a/include/linux/shm.h b/include/linux/shm.h
+index 1d3d3ae..270ceb1 100644
+--- a/include/linux/shm.h
++++ b/include/linux/shm.h
+@@ -9,7 +9,7 @@
+ struct file;
+ struct task_struct;
+ 
+-#ifdef CONFIG_SYSVIPC
++#if defined(CONFIG_SYSVIPC) && !defined(__BINDGEN__)
+ struct sysv_shm {
+ 	struct list_head shm_clist;
+ };
