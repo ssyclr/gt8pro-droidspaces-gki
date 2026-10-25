@@ -20,8 +20,30 @@ echo "common commit:   $EXPECTED"
 
 mkdir -p "$WORK"
 cd "$WORK"
-repo init --depth=1 --no-use-superproject -u https://android.googlesource.com/kernel/manifest -b "$BRANCH"
-cp "$MANIFEST" .repo/manifests/build_manifest.xml
+# Any manifest branch will do to bootstrap; the build manifest replaces it.
+repo init --depth=1 --no-use-superproject -u https://android.googlesource.com/kernel/manifest -b "$BRANCH" ||
+  repo init --depth=1 --no-use-superproject -u https://android.googlesource.com/kernel/manifest -b common-android-mainline
+
+# Branches named in upstream= get renamed later (android16-6.12-2025-06 is now
+# deprecated/android16-6.12-2025-06), and repo fails fetching a missing one.
+# Every project is pinned to a commit anyway, so fetch the commits directly.
+python3 - "$MANIFEST" .repo/manifests/build_manifest.xml <<'EOF'
+import re
+import sys
+
+src, dst = sys.argv[1:]
+
+def unpin_branches(m):
+    tag = m.group(0)
+    if re.search(r'\srevision="[0-9a-f]{40}"', tag):
+        tag = re.sub(r'\s(?:upstream|dest-branch)="[^"]*"', '', tag)
+    return tag
+
+with open(src, encoding='utf-8') as f:
+    xml = f.read()
+with open(dst, 'w', encoding='utf-8') as f:
+    f.write(re.sub(r'<project\s[^>]*>', unpin_branches, xml))
+EOF
 repo init --depth=1 --no-use-superproject -m build_manifest.xml
 
 sync() { repo sync -c --no-tags --no-clone-bundle --fail-fast -j8; }
