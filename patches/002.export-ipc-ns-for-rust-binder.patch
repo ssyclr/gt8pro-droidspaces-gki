@@ -1,0 +1,54 @@
+Export init_ipc_ns and put_ipc_ns for rust_binder.ko
+
+With CONFIG_IPC_NS=y, drivers/android/binder/rust_binderfs.c, which is
+built into the GKI module rust_binder.ko, references init_ipc_ns and
+put_ipc_ns. Neither is exported, so modpost fails:
+
+  ERROR: modpost: "put_ipc_ns" [drivers/android/rust_binder.ko] undefined!
+  ERROR: modpost: "init_ipc_ns" [drivers/android/rust_binder.ko] undefined!
+
+The stock GKI keeps IPC_NS off; there put_ipc_ns is an inline no-op and
+the init_ipc_ns reference is compiled out, so the problem never shows.
+Exporting both only adds two symbols to vmlinux; no existing symbol or
+type changes.
+
+diff --git a/ipc/msgutil.c b/ipc/msgutil.c
+index c7be0c7..ea18d0f 100644
+--- a/ipc/msgutil.c
++++ b/ipc/msgutil.c
+@@ -15,6 +15,7 @@
+ #include <linux/proc_ns.h>
+ #include <linux/uaccess.h>
+ #include <linux/sched.h>
++#include <linux/export.h>
+ 
+ #include "util.h"
+ 
+@@ -33,6 +34,7 @@ struct ipc_namespace init_ipc_ns = {
+ 	.ns.ops = &ipcns_operations,
+ #endif
+ };
++EXPORT_SYMBOL_GPL(init_ipc_ns);
+ 
+ struct msg_msgseg {
+ 	struct msg_msgseg *next;
+diff --git a/ipc/namespace.c b/ipc/namespace.c
+index 4df91ce..0b27267 100644
+--- a/ipc/namespace.c
++++ b/ipc/namespace.c
+@@ -16,6 +16,7 @@
+ #include <linux/user_namespace.h>
+ #include <linux/proc_ns.h>
+ #include <linux/sched/task.h>
++#include <linux/export.h>
+ 
+ #include "util.h"
+ 
+@@ -207,6 +208,7 @@ void put_ipc_ns(struct ipc_namespace *ns)
+ 			schedule_work(&free_ipc_work);
+ 	}
+ }
++EXPORT_SYMBOL_GPL(put_ipc_ns);
+ 
+ static inline struct ipc_namespace *to_ipc_ns(struct ns_common *ns)
+ {

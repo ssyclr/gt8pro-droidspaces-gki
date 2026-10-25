@@ -12,9 +12,13 @@
 
 1. **源码完全按官方构建同步。** 从 ci.android.com 下载官方构建用的 `manifest_<构建号>.xml`。它把每个仓库（kleaf、clang r536225、rust 等）都固定在官方构建当时的提交上。
    `android16-6.12-2025-06` 分支已被 Google 改名为 `deprecated/android16-6.12-2025-06`，所以不能再按分支名 `repo init`。
-2. **kABI 补丁** `patches/001.GKI-6.12-or-above-fix_sysvipc_kabi.patch`。原样取自 Droidspaces-OSS 的 `Documentation/resources/kernel-patches/GKI/kernel-6.12/`（取自提交 `21be5ba910da`）。
-   - 它把 `CONFIG_SYSVIPC` 新增的 `sysvsem`/`sysvshm` 挪进 `task_struct` 里 `rt_priority` 和 `se` 之间的对齐空隙。原厂这里有 28 字节空隙，补丁用掉 24 字节，后面所有字段的偏移不变。
-   - 再用 `__kabi_ignored` 让 gendwarfksyms 在 stable 模式（kleaf 设置了 `KBUILD_GENDWARFKSYMS_STABLE=1`）下不把它们算进符号 CRC。
+2. **补丁**（`patches/`）。按文件名顺序应用，每个都先 dry-run，有冲突就停下。
+   - `001.GKI-6.12-or-above-fix_sysvipc_kabi.patch`：kABI 补丁，原样取自 Droidspaces-OSS 的 `Documentation/resources/kernel-patches/GKI/kernel-6.12/`（取自提交 `21be5ba910da`）。
+     - 它把 `CONFIG_SYSVIPC` 新增的 `sysvsem`/`sysvshm` 挪进 `task_struct` 里 `rt_priority` 和 `se` 之间的对齐空隙。原厂这里有 28 字节空隙，补丁用掉 24 字节，后面所有字段的偏移不变。
+     - 再用 `__kabi_ignored` 让 gendwarfksyms 在 stable 模式（kleaf 设置了 `KBUILD_GENDWARFKSYMS_STABLE=1`）下不把它们算进符号 CRC。
+   - `002.export-ipc-ns-for-rust-binder.patch`：导出 `init_ipc_ns` 和 `put_ipc_ns`。
+     - 开了 `IPC_NS` 之后，GKI 模块 `rust_binder.ko` 会引用这两个没有导出的符号，modpost 报错。原厂不开 `IPC_NS`，所以从没遇到过。
+     - 导出后 vmlinux 只是多出 2 个符号，已有符号不变。手机上加载的仍是原厂的 `rust_binder.ko`。
 3. **直接修改 `gki_defconfig`**（不用 fragment），选项清单见 [`config/droidspaces_options.txt`](config/droidspaces_options.txt)：`# CONFIG_X is not set` 改成 `=y`，已经是 `=y` 的不动，不存在的追加到末尾。脚本会检查：除清单选项和下面第 4 条外，`gki_defconfig` 里没有任何其他改动。
 4. **信任原厂模块签名证书：** `CONFIG_SYSTEM_TRUSTED_KEYS="certs/stock_gki_module_signing.pem"`。
    - system_dlkm 里的 GKI 模块是用官方构建时生成的一次性密钥签名的。自编内核的密钥不同，如果不处理，这些模块会被当成未签名。6.12 的 GKI 模块保护随后会拒载 `rfkill.ko` 等模块，厂商的 `cfg80211`（Wi-Fi）、`btpower`（蓝牙）和 `nfc` 都依赖 `rfkill.ko`。
