@@ -78,14 +78,18 @@ adb shell su -c "dd if=/dev/block/by-name/init_boot_a of=/data/local/tmp/init_bo
 adb pull /data/local/tmp/boot_stock.img
 adb pull /data/local/tmp/init_boot_stock.img      # 两个原厂备份都要在电脑上保存好
 adb push Image /data/local/tmp/
-adb shell su -c "cd /data/local/tmp && mkdir -p repack && cd repack && \
+adb shell su -c "cd /data/local/tmp && rm -rf repack && mkdir repack && cd repack && \
   /data/adb/ksu/bin/magiskboot unpack ../boot_stock.img && \
-  cp ../Image kernel && \
+  rm -f kernel kernel_dtb && cp ../Image kernel && \
   /data/adb/ksu/bin/magiskboot repack ../boot_stock.img ../new-boot.img"
+# 核对：重新解包 new-boot.img，内核两段拼起来应与 Image 完全一致
+adb shell su -c "cd /data/local/tmp && rm -rf check && mkdir check && cd check && \
+  /data/adb/ksu/bin/magiskboot unpack ../new-boot.img && cat kernel kernel_dtb | sha256sum && sha256sum ../Image"
 adb pull /data/local/tmp/new-boot.img
 ```
 
-注意 `unpack` 输出的 `KERNEL_FMT`。`repack` 会按原格式自动压缩；如果没有自动压缩，就改用产物里对应格式的 `Image.lz4` 或 `Image.gz`。
+- 原厂 boot 是 header v4，`KERNEL_FMT [raw]`，所以直接用未压缩的 `Image`。
+- **`kernel_dtb` 必须删掉。** 6.12 的 Image 里内置了一个 72 字节的空 DTB（`empty_root.dtb`），magiskboot 会把它误认成附加 DTB，从那里把内核切成 `kernel` + `kernel_dtb` 两段。原厂的这两段拼起来就是完整 Image。如果不删 `kernel_dtb`，repack 会把原厂内核后半段约 19MB 接在新 Image 后面。
 
 先临时启动，不写分区：
 
