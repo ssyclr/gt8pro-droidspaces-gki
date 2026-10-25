@@ -1,0 +1,103 @@
+name: Build Droidspaces GKI kernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_id:
+        description: 官方 GKI 构建号（adb shell uname -r 里 -ab 后面的数字）
+        required: true
+        default: "14541642"
+      skip_options:
+        description: 排查用：本次不开的「推荐」选项，空格分隔，不带 CONFIG_（例如 MACVLAN IP_SET）
+        required: false
+        default: ""
+      build_stock:
+        description: 同时编一份未改动的 stock 内核作环境对照
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  baseline:
+    name: Official build ${{ inputs.build_id }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download official artifacts
+        env:
+          BUILD_ID: ${{ inputs.build_id }}
+        run: bash scripts/fetch_official.sh "$BUILD_ID" baseline
+      - uses: actions/upload-artifact@v4
+        with:
+          name: baseline
+          path: baseline/
+
+  build:
+    name: Build ${{ matrix.variant }}
+    needs: baseline
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: ${{ fromJSON(inputs.build_stock && '["stock","droidspaces"]' || '["droidspaces"]') }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free disk space
+        run: bash scripts/free_disk_space.sh
+      - uses: actions/download-artifact@v4
+        with:
+          name: baseline
+          path: baseline
+      - name: Install repo
+        run: |
+          mkdir -p "$HOME/bin"
+          curl -fsSL --retry 5 https://storage.googleapis.com/git-repo-downloads/repo -o "$HOME/bin/repo"
+          chmod +x "$HOME/bin/repo"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+      - name: Sync source from the official manifest
+        run: bash scripts/sync_source.sh "$WORK" baseline/manifest.xml
+      - name: Apply Droidspaces patch and config
+        if: matrix.variant == 'droidspaces'
+        env:
+          SKIP_OPTIONS: ${{ inputs.skip_options }}
+        run: bash scripts/apply_droidspaces.sh "$WORK/common" baseline/stock_gki_module_signing.pem
+      - name: Build kernel_aarch64_dist
+        run: bash scripts/build_kernel.sh "$WORK" "$WORK/dist" "$RUNNER_TEMP/logs"
+      - name: Collect outputs
+        run: bash scripts/collect_outputs.sh "$WORK" "$WORK/dist" "$RUNNER_TEMP/logs" "out/${{ matrix.variant }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.variant }}
+          path: out/${{ matrix.variant }}/
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ matrix.variant }}
+          path: ${{ runner.temp }}/logs/
+          if-no-files-found: ignore
+
+  report:
+    name: ABI check
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Compare with the official build
+        env:
+          SKIP_OPTIONS: ${{ inputs.skip_options }}
+        run: python3 tools/report.py artifacts config/droidspaces_options.txt report
+      - name: Job summary
+        if: always()
+        run: cat report/abi-report.md >> "$GITHUB_STEP_SUMMARY" || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: abi-report
+          path: report/

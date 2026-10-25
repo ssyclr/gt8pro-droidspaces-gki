@@ -1,0 +1,27 @@
+# Droidspaces GKI 选项，取自 Droidspaces-OSS 文档 Documentation/zh-CN/Kernel-Configuration.md
+# 「GKI 内核 → 第 2 步：修改 GKI defconfig」的配置块。
+# 格式：<选项名（不带 CONFIG_）> <分类>
+# CFS_BANDWIDTH、CGROUP_PIDS 不在这里，脚本也不会碰它们（见 README）。
+
+# 必需
+SYSVIPC                      required
+POSIX_MQUEUE                 required
+IPC_NS                       required
+PID_NS                       required
+DEVTMPFS                     required
+NETFILTER_XT_MATCH_ADDRTYPE  required
+
+# 推荐
+USER_NS                      recommended
+IP6_NF_NAT                   recommended
+IP6_NF_TARGET_MASQUERADE     recommended
+MACVLAN                      recommended
+NETFILTER_XT_TARGET_REJECT   recommended
+NETFILTER_XT_TARGET_LOG      recommended
+NETFILTER_XT_MATCH_RECENT    recommended
+IP_SET                       recommended
+IP_SET_HASH_IP               recommended
+IP_SET_HASH_NET              recommended
+NETFILTER_XT_SET             recommended
+TMPFS_POSIX_ACL              recommended
+TMPFS_XATTR                  recommended
