@@ -1,4 +1,5 @@
 name: Build Droidspaces GKI kernel
+run-name: ab${{ inputs.build_id }}${{ inputs.skip_options && format(' skip=[{0}]', inputs.skip_options) || '' }}
 
 on:
   workflow_dispatch:
