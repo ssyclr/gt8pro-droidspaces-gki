@@ -25,6 +25,15 @@ if [ -f "$LOGS/check_defconfig_disabled" ]; then
   cp "$LOGS/check_defconfig_disabled" "$OUT/"
 fi
 
+# The Rust bindings bindgen generated, for tracking down Rust symbol CRCs.
+mkdir -p "$OUT/rust"
+for f in bindings/bindings_generated.rs bindings/bindings_helpers_generated.rs exports_helpers_generated.h; do
+  src=$(find "$WORK/out" -path "*/rust/$f" -print -quit)
+  if [ -n "$src" ]; then
+    cp "$src" "$OUT/rust/"
+  fi
+done
+
 # Listed options that are not Kconfig symbols in this tree at all.
 : > "$OUT/kconfig_missing.txt"
 while read -r opt _; do
