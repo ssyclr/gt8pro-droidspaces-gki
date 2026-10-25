@@ -1,0 +1,17 @@
+Keep the rust_helper_from_kuid export from being trimmed
+
+With USER_NS=y no module of this build uses rust_helper_from_kuid any
+more, so TRIM_UNUSED_KSYMS would drop its export. Listing it in the KMI
+symbol list keeps it exported for the stock rust_binder.ko.
+
+diff --git a/gki/aarch64/symbols/base b/gki/aarch64/symbols/base
+index bdae957..0e62c7a 100644
+--- a/gki/aarch64/symbols/base
++++ b/gki/aarch64/symbols/base
+@@ -3,3 +3,6 @@
+   module_layout
+   __put_task_struct
+   utf8_data_table
++
++# kept exported for the stock rust_binder.ko when CONFIG_USER_NS=y
++  rust_helper_from_kuid
