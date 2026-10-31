@@ -1,0 +1,101 @@
+Return a sentinel task to oplus_bsp_midas instead of NULL
+
+oplus_bsp_midas.ko, a prebuilt OPLUS vendor module, hooks
+android_vh_cpufreq_acct_update_power. The first time it sees a process
+it calls find_task_by_vpid(task->tgid) and copies ->comm from the result
+without a NULL check. task->tgid is the global tgid but the lookup runs
+in current's PID namespace, so for any process inside a child PID
+namespace (a Droidspaces container) it gets NULL and panics on the next
+scheduler tick:
+
+  Unable to handle kernel NULL pointer dereference at 0000000000000910
+  pc : strncpy
+  lr : update_or_create_entry_locked [oplus_bsp_midas]
+
+The stock GKI keeps PID_NS off, so the lookup never fails there.
+
+When the lookup fails and the caller sits in oplus_bsp_midas, return a
+long-lived sentinel copy of init_task instead. midas only reads ->comm
+from it. Every other caller still gets NULL. The prototype is unchanged,
+so no symbol CRC changes.
+
+Ported from WildKernels/kernel_patches
+common/droidspaces/0001-Return-ghost-task-if-task-is-null-and-is-requested-b.patch
+(fatalcoder524, as of 03bb1d245c), which the OnePlus 15 (same SoC)
+Droidspaces builds use. Changes from that patch:
+- init_ghost_task() is static: -Wmissing-prototypes is on by default
+  and this tree builds with CONFIG_WERROR=y.
+- strscpy() instead of strncpy() so ->comm stays NUL-terminated.
+- Dropped the CONFIG_REFCOUNT_FULL branch (no such option in 6.12) and
+  the _Generic helper; usage is a refcount_t here.
+
+diff --git a/kernel/pid.c b/kernel/pid.c
+index a564bab..19f87bc 100644
+--- a/kernel/pid.c
++++ b/kernel/pid.c
+@@ -45,6 +45,8 @@
+ #include <linux/pidfs.h>
+ #include <net/sock.h>
+ #include <uapi/linux/pidfd.h>
++#include <linux/refcount.h>
++#include <linux/module.h>
+ 
+ struct pid init_struct_pid = {
+ 	.count		= REFCOUNT_INIT(1),
+@@ -93,6 +95,25 @@ struct pid_namespace init_pid_ns = {
+ };
+ EXPORT_SYMBOL_GPL(init_pid_ns);
+ 
++/*
++ * oplus_bsp_midas.ko (a prebuilt vendor module) passes a task's global tgid
++ * to find_task_by_vpid() and dereferences the result without a NULL check.
++ * Inside a child PID namespace that lookup fails, so hand that module a
++ * long-lived sentinel task instead of NULL. It only reads ->comm from it.
++ */
++static struct task_struct ghost_task;
++static bool ghost_task_ready;
++
++static void __init init_ghost_task(void)
++{
++	memcpy(&ghost_task, &init_task, sizeof(struct task_struct));
++	strscpy(ghost_task.comm, "ghost-task-sentinel", TASK_COMM_LEN);
++	ghost_task.pid = -1;
++	ghost_task.tgid = -1;
++	refcount_set(&ghost_task.usage, 1000);
++	ghost_task_ready = true;
++}
++
+ /*
+  * Note: disable interrupts while the pidmap_lock is held as an
+  * interrupt might come in and do read_lock(&tasklist_lock).
+@@ -432,7 +453,21 @@ struct task_struct *find_task_by_pid_ns(pid_t nr, struct pid_namespace *ns)
+ 
+ struct task_struct *find_task_by_vpid(pid_t vnr)
+ {
+-	return find_task_by_pid_ns(vnr, task_active_pid_ns(current));
++	struct task_struct *task;
++	unsigned long caller_ip = _RET_IP_;
++	struct module *mod;
++
++	task = find_task_by_pid_ns(vnr, task_active_pid_ns(current));
++	if (unlikely(!task)) {
++		preempt_disable();
++		mod = __module_address(caller_ip);
++		if (mod && !strcmp(mod->name, "oplus_bsp_midas")) {
++			preempt_enable();
++			return ghost_task_ready ? &ghost_task : &init_task;
++		}
++		preempt_enable();
++	}
++	return task;
+ }
+ EXPORT_SYMBOL_GPL(find_task_by_vpid);
+ 
+@@ -665,6 +700,7 @@ SYSCALL_DEFINE2(pidfd_open, pid_t, pid, unsigned int, flags)
+ 
+ void __init pid_idr_init(void)
+ {
++	init_ghost_task();
+ 	/* Verify no one has done anything silly: */
+ 	BUILD_BUG_ON(PID_MAX_LIMIT >= PIDNS_ADDING);
+ 
