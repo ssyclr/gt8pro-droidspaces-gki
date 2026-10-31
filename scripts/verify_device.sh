@@ -61,10 +61,12 @@ probe "mkdir -p /data/local/tmp/vd_dev && mount -t devtmpfs devtmpfs /data/local
 probe "mkdir -p /data/local/tmp/vd_mq && mount -t mqueue mqueue /data/local/tmp/vd_mq && umount /data/local/tmp/vd_mq && rmdir /data/local/tmp/vd_mq"
 
 if [ "$STRESS" = 1 ]; then
-  echo "== PID namespace stress: 20 rounds of processes living in a new PID namespace"
-  # Each child sleeps long enough to be accounted on several scheduler ticks,
-  # which is what made oplus_bsp_midas dereference NULL.
-  su_sh 'for i in $(seq 1 20); do unshare -p -f sh -c "sleep 0.3; true" || echo round $i failed; done; echo done'
+  echo "== PID namespace stress"
+  # Processes inside a new PID namespace get accounted on many scheduler
+  # ticks, which is what made oplus_bsp_midas dereference NULL. The exec
+  # loop also covers the execve hook of oplus_secure_guard_new.
+  su_sh 'for i in $(seq 1 20); do unshare -p -f sh -c "sleep 0.3; true" || echo round $i failed; done; echo "20 short-lived namespaces: done"'
+  su_sh 'unshare -p -f sh -c "i=0; while [ \$i -lt 100 ]; do /system/bin/toybox true; i=\$((i + 1)); done; echo \"execs inside one namespace: \$i\"; sleep 10" && echo "10 s in one namespace: done"'
   sleep 3
   if adb get-state >/dev/null 2>&1; then
     echo "still up, uptime: $(adb shell "cut -d' ' -f1 /proc/uptime" | tr -d '\r')s"
