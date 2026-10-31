@@ -68,7 +68,7 @@ if [ "$STRESS" = 1 ]; then
   sleep 3
   if adb get-state >/dev/null 2>&1; then
     echo "still up, uptime: $(adb shell "cut -d' ' -f1 /proc/uptime" | tr -d '\r')s"
-    su_sh 'dmesg' | grep -iE "Unable to handle|Internal error|Kernel panic|oplus_bsp_midas" || echo "(no oops in dmesg)"
+    su_sh 'dmesg' | grep -E "Unable to handle|Internal error|Kernel panic|BUG: " || echo "(no oops in dmesg)"
   else
     echo "device dropped off adb: it probably panicked; see /data/persist_log/backup/SYSTEM_LAST_KMSG.txt after reboot"
   fi

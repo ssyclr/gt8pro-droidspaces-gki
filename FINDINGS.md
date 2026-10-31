@@ -5,7 +5,8 @@
 - 用本仓库的补丁 001–006 编出的 GKI 内核，ABI 与官方构建 ab14541642 完全一致，刷入后开机和日常使用都正常：Wi-Fi、蓝牙、移动数据、相机、指纹、充电、KernelSU 都没问题，665 个模块与原厂逐一对齐。
 - 但只要有进程运行在**子 PID 命名空间**里（也就是 Droidspaces 容器），OPLUS 的预编译厂商模块 `oplus_bsp_midas.ko` 就会在下一个调度器 tick 空指针解引用，导致内核 panic。
 - 补丁 007 修复了这个问题。它移植自 WildKernels 给一加 15（与 GT8 Pro 同一颗 SoC）做的 Droidspaces 构建所用的补丁，只改内核 `kernel/pid.c`，不需要动 vendor 分区，ABI 不变。
-- **状态：** 补丁 007 已通过 CI 构建和 ABI 自检（run 41163521204）：已有符号 CRC 变化 0、删除 0、导出属性变化 0，新增的仍是原来那 8 个符号，结构体只有 `task_struct` 在空隙里新增成员。再加上补丁 008 的构建（run 41163530823）结果相同。**尚未在 GT8 Pro 真机上验证**，需要接上设备后用 `scripts/verify_device.sh --stress` 测试。
+- **状态：** 补丁 007 已通过 CI 构建和 ABI 自检（run 41163521204）：已有符号 CRC 变化 0、删除 0、导出属性变化 0，新增的仍是原来那 8 个符号，结构体只有 `task_struct` 在空隙里新增成员。再加上补丁 008 的构建（run 41163530823）结果相同。
+- **真机验证（2026-10-31，main 分支补丁 001–008，构建 run 41166023431）：** 刷入后正常开机，665 个模块与原厂逐一对齐，dmesg 里没有任何模块错误。`verify_device.sh --stress` 让进程在新的 PID 命名空间里跑了 20 轮，又在一个 PID 命名空间里连续 exec 100 次并存活 10 秒，设备始终在线，没有 oops。此前同样的场景会立即 panic。
 
 之前版本的本文件曾判断「这台设备在只改 boot 的前提下无法修复」，这个判断是错的。
 
@@ -73,7 +74,7 @@ strncpy(entry->leader_comm, leader->comm, 16);  // 没有判空
 
 - 绝大多数用法是安全的：解析的是 userspace 写进来的 pid（ioctl、proc/sysfs 写入），而且是在写入方自己的命名空间里解析。
 - 静态分析发现 `oplus_secure_guard_new.ko` 的 execve 处理函数 `do_execveat_common_entry_handler`，在 `find_task_by_vpid` 之后也没有判空就调用 `get_task_struct()`，并读取了 `->cred`。没能确认它查找的是哪个 pid，测试时也是 midas 先崩溃的。
-- 一加 15 的 Droidspaces 构建只修了 midas，此后一直在用，说明这一处在实际使用中大概率不会触发。真机验证时要重点留意 execve 场景（`--stress` 里每一轮都会 exec）。
+- 一加 15 的 Droidspaces 构建只修了 midas，此后一直在用。GT8 Pro 真机上，在 PID 命名空间里连续 exec 100 次也没有触发，所以这一处在实际使用中不会触发，至少常见的 exec 场景不会。
 
 ## 其他发现
 
