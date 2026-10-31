@@ -1,0 +1,42 @@
+Only let privileged callers create user namespaces
+
+The stock GKI has USER_NS off, so no app can create user namespaces.
+Turning it on for Droidspaces lets every unprivileged app create them,
+which exposes kernel code that is otherwise unreachable without
+privileges. Require CAP_SYS_ADMIN in the caller's user namespace, so
+unprivileged apps are back to the stock behaviour while root
+(Droidspaces) keeps working.
+
+Side effect: non-root users inside a container cannot create user
+namespaces either, so sandboxes that rely on unprivileged user
+namespaces (Chromium, bubblewrap/Flatpak) do not work for them.
+
+Ported from WildKernels/kernel_patches
+common/droidspaces/0001-Guard-USER_NS-for-non-root-users.patch
+(fatalcoder524, as of 55d0d2305d); only whitespace and a comment differ.
+
+diff --git a/kernel/user_namespace.c b/kernel/user_namespace.c
+index aa0b2e4..8f193d2 100644
+--- a/kernel/user_namespace.c
++++ b/kernel/user_namespace.c
+@@ -87,6 +87,10 @@ int create_user_ns(struct cred *new)
+ 	struct ucounts *ucounts;
+ 	int ret, i;
+ 
++	/* Only privileged callers may create user namespaces. */
++	if (!ns_capable(current_user_ns(), CAP_SYS_ADMIN))
++		return -EPERM;
++
+ 	ret = -ENOSPC;
+ 	if (parent_ns->level > 32)
+ 		goto fail;
+@@ -178,6 +182,9 @@ int unshare_userns(unsigned long unshare_flags, struct cred **new_cred)
+ 	struct cred *cred;
+ 	int err = -ENOMEM;
+ 
++	if ((unshare_flags & CLONE_NEWUSER) && !ns_capable(current_user_ns(), CAP_SYS_ADMIN))
++		return -EPERM;
++
+ 	if (!(unshare_flags & CLONE_NEWUSER))
+ 		return 0;
+ 
